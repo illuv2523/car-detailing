@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>AutoStudio — Учет заказов</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ================= HEADER ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">🏁</div>
+      <div class="brand-text">
+        <div class="brand-title">AutoStudio</div>
+        <div class="brand-sub">Учет заказов &amp; расписание</div>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <button class="header-btn" id="themeToggle" title="Сменить тему">🌙</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat stat-blue">
+        <span class="stat-label">Машин в работе</span>
+        <span class="stat-value" id="statInWork">0</span>
+      </div>
+      <div class="stat stat-orange">
+        <span class="stat-label">Записей на сегодня</span>
+        <span class="stat-value" id="statToday">0</span>
+      </div>
+      <div class="stat stat-green">
+        <span class="stat-label">Ожидают приезда</span>
+        <span class="stat-value" id="statWaiting">0</span>
+      </div>
+    </div>
+
+    <button class="btn primary top-new-btn" data-action="new-order">+ Новый заказ</button>
+  </header>
+
+  <!-- ================= TABS ================= -->
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="schedule">📅 <span>Расписание</span></button>
+    <button class="tab" data-tab="work">🛠️ <span>В работе</span></button>
+    <button class="tab" data-tab="analytics">📊 <span>Аналитика</span></button>
+    <button class="tab" data-tab="archive">🗂️ <span>Архив</span></button>
+    <button class="tab" data-tab="admin">🔧 <span>Админ</span></button>
+    <button class="tab" data-tab="settings">⚙️ <span>Настройки</span></button>
+  </nav>
+
+  <main class="content">
+
+    <!-- ================= SCHEDULE ================= -->
+    <section class="tab-panel active" id="panel-schedule">
+      <div class="section-head week-head">
+        <div class="week-title-wrap">
+          <h2>Расписание недели</h2>
+          <div class="week-range" id="weekRange"></div>
+        </div>
+        <div class="week-nav">
+          <button class="icon-btn" data-action="prev-week" title="Предыдущая неделя">‹</button>
+          <button class="btn sm ghost" id="todayWeekBtn" data-action="today-week" style="display:none">Сегодня</button>
+          <button class="icon-btn" data-action="next-week" title="Следующая неделя">›</button>
+        </div>
+      </div>
+      <div class="week-strip" id="weekStrip"></div>
+
+      <div class="section-head">
+        <h2>Заказы на неделе</h2>
+        <span class="hint" id="weekOrdersCount"></span>
+      </div>
+      <div id="upcomingList" class="upcoming-list"></div>
+
+      <button class="fab" data-action="new-order">＋</button>
+    </section>
+
+    <!-- ================= WORK ================= -->
+    <section class="tab-panel" id="panel-work">
+      <div class="section-head">
+        <h2>Заказы в работе</h2>
+        <span class="hint">Калькулятор и материалы</span>
+      </div>
+      <div id="workList" class="work-list"></div>
+    </section>
+
+    <!-- ================= ANALYTICS ================= -->
+    <section class="tab-panel" id="panel-analytics">
+      <div class="section-head">
+        <h2>Финансовая аналитика</h2>
+      </div>
+      <div class="period-filter" id="periodFilter">
+        <button class="pill active" data-period="week">За неделю</button>
+        <button class="pill" data-period="month">За текущий месяц</button>
+        <button class="pill" data-period="all">За все время</button>
+      </div>
+      <div id="analyticsContent"></div>
+    </section>
+
+    <!-- ================= ARCHIVE ================= -->
+    <section class="tab-panel" id="panel-archive">
+      <div class="section-head">
+        <h2>Архив заказов</h2>
+        <span class="hint" id="archiveCount"></span>
+      </div>
+      <div class="search-wrap">
+        <input type="search" id="archiveSearch" placeholder="🔍 Поиск: марка, гос.номер, телефон, клиент">
+      </div>
+      <div id="archiveList" class="archive-list"></div>
+    </section>
+
+    <!-- ================= ADMIN ================= -->
+    <section class="tab-panel" id="panel-admin">
+      <div class="section-head">
+        <h2>Админ-панель</h2>
+        <span class="hint" id="adminCount"></span>
+      </div>
+      <div class="admin-filters">
+        <input type="search" id="adminSearch" placeholder="🔍 Поиск: марка, номер, клиент, телефон...">
+        <select id="adminStatusFilter">
+          <option value="all">Все статусы</option>
+          <option value="scheduled">Запланированы</option>
+          <option value="inwork">В работе</option>
+          <option value="closed">Закрыты</option>
+        </select>
+      </div>
+      <div id="adminList" class="admin-list"></div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section class="tab-panel" id="panel-settings">
+      <div class="section-head">
+        <h2>Оформление</h2>
+      </div>
+      <div class="settings-card">
+        <div class="pref-field">
+          <span class="pref-label">🎨 Тема интерфейса</span>
+          <div class="segmented" id="themeSelect">
+            <button data-theme-val="dark">🌙 Тёмная</button>
+            <button data-theme-val="light">☀️ Светлая</button>
+          </div>
+        </div>
+        <p class="muted small" style="margin-top:14px">
+          💡 Валюта (UZS / USD) выбирается <b>индивидуально для каждого заказа</b> при создании или редактировании.
+        </p>
+      </div>
+
+      <div class="section-head">
+        <h2>Настройки распределения</h2>
+        <span class="hint">Сумма должна быть 100%</span>
+      </div>
+
+      <div class="settings-card">
+        <div class="dist-inputs">
+          <label class="dist-field">
+            <span>🏢 Студия (аренда)</span>
+            <div class="input-pct"><input type="number" id="sStudio" min="0" max="100" step="1"><i>%</i></div>
+          </label>
+          <label class="dist-field">
+            <span>👨‍🔧 Зарплата мастера</span>
+            <div class="input-pct"><input type="number" id="sMaster" min="0" max="100" step="1"><i>%</i></div>
+          </label>
+          <label class="dist-field">
+            <span>👑 Владелец бренда</span>
+            <div class="input-pct"><input type="number" id="sOwner" min="0" max="100" step="1"><i>%</i></div>
+          </label>
+          <label class="dist-field">
+            <span>🛡 Резервный фонд</span>
+            <div class="input-pct"><input type="number" id="sReserve" min="0" max="100" step="1"><i>%</i></div>
+          </label>
+        </div>
+        <div class="sum-indicator" id="sumIndicator">Сумма: 100%</div>
+        <button class="btn primary" data-action="save-settings">💾 Сохранить проценты</button>
+      </div>
+
+      <div class="section-head"><h2>Данные</h2></div>
+      <div class="settings-card">
+        <div class="data-actions">
+          <button class="btn ghost" data-action="export">⬇️ Экспорт данных</button>
+          <button class="btn ghost" data-action="import">⬆️ Импорт данных</button>
+          <button class="btn danger" data-action="clear-db">🗑 Очистить базу</button>
+        </div>
+        <input type="file" id="importFile" accept="application/json" hidden>
+        <p class="muted small">Все данные хранятся локально в вашем браузере (localStorage) и никуда не отправляются.</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ================= ORDER MODAL ================= -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">Новый заказ</h2>
+      <button class="icon-btn" data-action="close-modal">✕</button>
+    </div>
+    <form id="orderForm" class="modal-body">
+      <div class="grid-2">
+        <label>ФИО клиента<input name="clientName" required autocomplete="off"></label>
+        <label>Телефон<input name="clientPhone" required autocomplete="off" placeholder="+998 ..."></label>
+        <label>Марка<input name="brand" required autocomplete="off" placeholder="BMW"></label>
+        <label>Модель<input name="model" autocomplete="off" placeholder="X5"></label>
+        <label>Гос. номер<input name="plate" autocomplete="off" placeholder="01 A 123 AA"></label>
+        <label>Валюта заказа
+          <select name="currency">
+            <option value="UZS">сум (UZS)</option>
+            <option value="USD">$ (USD)</option>
+          </select>
+        </label>
+        <label>Согласованная сумма<input type="number" name="agreedAmount" min="0" step="1" required value="0"></label>
+        <label>Предоплата<input type="number" name="prepayment" min="0" step="1" value="0"></label>
+        <label>Дата визита<input type="date" name="date" required></label>
+        <label>Время визита<input type="time" name="time" required></label>
+      </div>
+      <label>Вид работы<textarea name="workType" rows="2" placeholder="Полировка, химчистка, тонировка..."></textarea></label>
+
+      <div id="adminFields" class="admin-fields" hidden>
+        <label style="margin-top:8px">Статус заказа
+          <select name="status">
+            <option value="scheduled">Запланирован</option>
+            <option value="inwork">В работе</option>
+            <option value="closed">Закрыт</option>
+          </select>
+        </label>
+
+        <div class="modal-materials">
+          <div class="mm-head">
+            <span>🧾 Материалы (чеки)</span>
+            <b id="mmTotal">0</b>
+          </div>
+          <div id="mmList" class="mat-list"></div>
+          <div class="mat-add">
+            <input class="mat-name-modal" placeholder="Название материала" type="text">
+            <input class="mat-amount-modal" type="number" min="0" step="1" placeholder="Сумма">
+            <button type="button" data-action="add-modal-material" title="Добавить">＋</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-action="close-modal">Отмена</button>
+        <button type="submit" class="btn primary">Сохранить</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ================= COMPLETE MODAL ================= -->
+<div class="modal-overlay" id="completeOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>Завершение заказа</h2>
+      <button class="icon-btn" data-action="close-complete">✕</button>
+    </div>
+    <div class="modal-body" id="completeBody"></div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
