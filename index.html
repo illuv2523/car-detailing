@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Houston Studio — Учет заказов</title>
+<title>Учет заказов и расписание</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,10 +16,13 @@
   <!-- ================= HEADER ================= -->
   <header class="topbar">
     <div class="brand">
-      <div class="logo">🏁</div>
+      <!-- Логотип: сохраните картинку как logo.png в папке с проектом -->
+      <img src="logo.png" alt="Логотип" class="brand-logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='grid';">
+      <div class="logo" style="display:none">🏁</div>
+      
       <div class="brand-text">
-        <div class="brand-title">Houston Studio</div>
-        <div class="brand-sub">Учет заказов &amp; расписание</div>
+        <div class="brand-title">Учет заказов</div>
+        <div class="brand-sub">и расписание</div>
       </div>
     </div>
 
@@ -260,6 +263,17 @@
       <button class="icon-btn" data-action="close-complete">✕</button>
     </div>
     <div class="modal-body" id="completeBody"></div>
+  </div>
+</div>
+
+<!-- ================= REPORT MODAL ================= -->
+<div class="modal-overlay" id="reportOverlay">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h2 id="reportTitle">Отчёт</h2>
+      <button class="icon-btn" data-action="close-report">✕</button>
+    </div>
+    <div class="modal-body" id="reportBody"></div>
   </div>
 </div>
 

@@ -1,5 +1,5 @@
 /* =====================================================================
-   AutoStudio — Учет заказов и расписание автостудии
+   Stealth Side — Учет заказов и расписание автостудии
    ===================================================================== */
 
 /* ---------- Константы ---------- */
@@ -16,17 +16,26 @@ const MONTHS_FULL  = ['января','февраля','марта','апреля
 const DAY_NAMES    = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 const DAY_FULL     = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
 
+const PAYOUT_CATS = ['studio', 'master', 'owner', 'reserve'];
+const PAYOUT_LABELS = {
+  studio:  '🏢 Студия',
+  master:  '👨‍🔧 Мастер',
+  owner:   '👑 Владелец',
+  reserve: '🛡 Резерв',
+};
+
 /* ---------- State ---------- */
 let orders = [];
 let settings = { ...DEFAULT_SETTINGS };
 let editingId = null;
 let completingId = null;
+let reportingId = null;
 let editingMaterials = [];
 let archiveSearch = '';
 let analyticsPeriod = 'week';
 let adminSearch = '';
 let adminStatusFilter = 'all';
-let weekOffset = 0; // 0 = текущая неделя, -1 = прошлая, +1 = следующая
+let weekOffset = 0;
 
 /* =====================================================================
    Утилиты
@@ -115,7 +124,10 @@ function loadState() {
     const raw = localStorage.getItem(LS_ORDERS);
     orders = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(orders)) orders = [];
-    orders.forEach(o => { if (!o.currency) o.currency = 'UZS'; });
+    orders.forEach(o => {
+      if (!o.currency) o.currency = 'UZS';
+      if (!o.payouts) o.payouts = { studio: 0, master: 0, owner: 0, reserve: 0 };
+    });
   } catch (e) { orders = []; }
 
   try {
@@ -167,9 +179,47 @@ function calcDistribution(order, s = settings) {
   };
 }
 
+function getDistribution(order) {
+  if (order.status === 'closed' && order.final) {
+    return {
+      materialsTotal: order.final.materialsTotal,
+      profit: order.final.profit,
+      studio: order.final.studio,
+      master: order.final.master,
+      owner: order.final.owner,
+      reserve: order.final.reserve,
+    };
+  }
+  return calcDistribution(order, order.distribution || settings);
+}
+
+function getPayouts(order) {
+  if (!order.payouts) order.payouts = { studio: 0, master: 0, owner: 0, reserve: 0 };
+  return order.payouts;
+}
+
+function getPayoutStats(order) {
+  const d = getDistribution(order);
+  const payouts = getPayouts(order);
+  let totalShare = 0, totalPaid = 0;
+  const rows = {};
+  PAYOUT_CATS.forEach(cat => {
+    const share = Number(d[cat]) || 0;
+    let paid = Number(payouts[cat]) || 0;
+    if (paid > share) paid = share;
+    if (paid < 0) paid = 0;
+    const rest = share - paid;
+    rows[cat] = { share, paid, rest };
+    totalShare += share;
+    totalPaid += paid;
+  });
+  return { rows, totalShare, totalPaid, totalRest: totalShare - totalPaid, distribution: d };
+}
+
 function buildReport(order) {
   const cur = curOf(order);
-  const d = order.final || calcDistribution(order, order.distribution || settings);
+  const d = getDistribution(order);
+  const stats = getPayoutStats(order);
   const balance = (Number(order.agreedAmount) || 0) - (Number(order.prepayment) || 0);
   const lines = [
     `🚗 *АВТОСТУДИЯ — ЗАКАЗ*`,
@@ -189,10 +239,27 @@ function buildReport(order) {
     `👨‍🔧 Мастер: ${money(d.master, cur)}`,
     `👑 Владелец: ${money(d.owner, cur)}`,
     `🛡 Резерв: ${money(d.reserve, cur)}`,
-    ``,
-    `🕒 ${order.date ? formatDateHuman(order.date) + ' ' + (order.time || '') : ''}`.trim(),
-  ].filter(l => l !== null);
-  return lines.join('\n');
+  ];
+
+  if (stats.totalPaid > 0) {
+    lines.push('');
+    lines.push('💼 *Выплаты по долям:*');
+    PAYOUT_CATS.forEach(cat => {
+      const r = stats.rows[cat];
+      if (r.share === 0 && r.paid === 0) return;
+      const mark = r.rest <= 0 ? '✓' : `осталось ${money(r.rest, cur)}`;
+      lines.push(`${PAYOUT_LABELS[cat]}: ${money(r.paid, cur)} / ${money(r.share, cur)} — ${mark}`);
+    });
+    lines.push(`━━━━━━━━━━━━━━━━━━`);
+    lines.push(`💰 *Всего выплачено:* ${money(stats.totalPaid, cur)}`);
+    lines.push(`⏳ *Осталось выплатить:* ${money(stats.totalRest, cur)}`);
+  }
+
+  if (order.date) {
+    lines.push('');
+    lines.push(`🕒 ${formatDateHuman(order.date)} ${order.time || ''}`.trim());
+  }
+  return lines.filter(l => l !== null).join('\n');
 }
 
 /* =====================================================================
@@ -247,7 +314,7 @@ function renderStats() {
 }
 
 /* =====================================================================
-   Рендер: расписание недели (с навигацией)
+   Рендер: расписание недели
    ===================================================================== */
 function renderSchedule() {
   const baseMonday = startOfWeek(new Date());
@@ -257,7 +324,6 @@ function renderSchedule() {
   const mondayISO = toISODate(monday);
   const sundayISO = toISODate(sunday);
 
-  /* --- заголовок с диапазоном --- */
   const rangeEl = $('#weekRange');
   if (rangeEl) {
     const prefix =
@@ -269,11 +335,9 @@ function renderSchedule() {
     rangeEl.textContent = prefix + formatWeekRange(monday, sunday);
   }
 
-  /* --- кнопка "Сегодня" видна только при смещении --- */
   const todayBtn = $('#todayWeekBtn');
   if (todayBtn) todayBtn.style.display = weekOffset === 0 ? 'none' : '';
 
-  /* --- лента дней --- */
   const weekHtml = Array.from({ length: 7 }, (_, i) => {
     const d   = addDays(monday, i);
     const iso = toISODate(d);
@@ -289,7 +353,6 @@ function renderSchedule() {
   }).join('');
   $('#weekStrip').innerHTML = weekHtml;
 
-  /* --- все заказы выбранной недели --- */
   const weekOrders = orders
     .filter(o => o.date >= mondayISO && o.date <= sundayISO)
     .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
@@ -343,6 +406,7 @@ function renderOrderCard(o) {
       <div class="oc-right">
         <div class="oc-price">${money(o.agreedAmount, cur)}</div>
         <div class="oc-actions">
+          <button class="icon-btn mini" data-action="open-report" data-id="${o.id}" title="Отчёт">📊</button>
           <button class="icon-btn mini" data-action="edit" data-id="${o.id}" title="Редактировать">✏️</button>
           <button class="icon-btn mini" data-action="delete" data-id="${o.id}" title="Удалить">🗑</button>
           ${showStart ? `<button class="btn sm primary" data-action="start-work" data-id="${o.id}">В работу →</button>` : ''}
@@ -372,6 +436,11 @@ function renderWork() {
     const cur   = curOf(o);
     const mat   = materialsTotal(o);
     const bal   = (Number(o.agreedAmount) || 0) - (Number(o.prepayment) || 0);
+    const stats = getPayoutStats(o);
+    const payoutBadge = stats.totalRest > 0
+      ? `<span class="status-badge scheduled" style="margin-left:6px">⏳ ${money(stats.totalRest, cur)} к выплате</span>`
+      : `<span class="status-badge closed" style="margin-left:6px">✓ все выплаты</span>`;
+
     const matsHtml = (o.materials || []).map((m, i) => `
       <div class="mat-item">
         <span>${esc(m.name)}</span>
@@ -386,6 +455,7 @@ function renderWork() {
             <div class="wc-title">
               ${esc(o.brand)} ${esc(o.model || '')}
               ${o.plate ? `<span class="plate">${esc(o.plate)}</span>` : ''}
+              ${payoutBadge}
             </div>
             <div class="wc-client">👤 ${esc(o.clientName)} · 📞 ${esc(o.clientPhone)}</div>
             ${o.workType ? `<div class="wc-work">🔧 ${esc(o.workType)}</div>` : ''}
@@ -413,7 +483,7 @@ function renderWork() {
         </div>
 
         <div class="wc-actions">
-          <button class="btn ghost" data-action="copy" data-id="${o.id}">📋 Отчет в мессенджер</button>
+          <button class="btn ghost" data-action="open-report" data-id="${o.id}">📊 Отчёт</button>
           <button class="btn ghost" data-action="edit" data-id="${o.id}">✏️ Изменить</button>
           <button class="btn primary" data-action="complete" data-id="${o.id}">✅ Завершить и рассчитать</button>
         </div>
@@ -469,9 +539,10 @@ function renderAnalytics() {
 function renderCurrencyBlock(cur, list) {
   let turnover = 0, materials = 0, profit = 0;
   let dStudio = 0, dMaster = 0, dOwner = 0, dReserve = 0;
+  let totalPaid = 0, totalRest = 0;
 
   list.forEach(o => {
-    const f = o.final || calcDistribution(o, o.distribution || settings);
+    const f = getDistribution(o);
     turnover  += Number(o.agreedAmount) || 0;
     materials += f.materialsTotal;
     profit    += f.profit;
@@ -479,6 +550,9 @@ function renderCurrencyBlock(cur, list) {
     dMaster   += f.master;
     dOwner    += f.owner;
     dReserve  += f.reserve;
+    const st = getPayoutStats(o);
+    totalPaid += st.totalPaid;
+    totalRest += st.totalRest;
   });
 
   const avgCheck = list.length ? turnover / list.length : 0;
@@ -501,7 +575,7 @@ function renderCurrencyBlock(cur, list) {
         <div class="kpi k-profit">
           <div class="kpi-label">Чистая прибыль</div>
           <div class="kpi-value">${money(profit, cur)}</div>
-          <div class="kpi-sub">После вычета материалов</div>
+          <div class="kpi-sub">Выплачено: ${money(totalPaid, cur)} · Осталось: ${money(totalRest, cur)}</div>
         </div>
       </div>
 
@@ -548,7 +622,11 @@ function renderArchive() {
 
   list.innerHTML = filtered.map(o => {
     const cur = curOf(o);
-    const f = o.final || calcDistribution(o, o.distribution || settings);
+    const f = getDistribution(o);
+    const stats = getPayoutStats(o);
+    const payoutChip = stats.totalRest > 0
+      ? `<div class="ac-date" style="color:var(--accent2)">⏳ К выплате: ${money(stats.totalRest, cur)}</div>`
+      : `<div class="ac-date" style="color:var(--green)">✓ Все выплаты закрыты</div>`;
     return `
       <div class="archive-card">
         <div class="ac-main">
@@ -559,12 +637,13 @@ function renderArchive() {
           </div>
           <div class="ac-sub">👤 ${esc(o.clientName)} · 📞 ${esc(o.clientPhone)}</div>
           <div class="ac-date">📅 Закрыт: ${formatDateTime(o.closedAt)}</div>
+          ${payoutChip}
         </div>
         <div class="ac-money">
           <b>${money(f.profit, cur)}</b>
           <span>чистая прибыль</span>
         </div>
-        <button class="icon-btn" data-action="copy" data-id="${o.id}" title="Скопировать отчёт">📋</button>
+        <button class="icon-btn" data-action="open-report" data-id="${o.id}" title="Открыть отчёт">📊</button>
       </div>`;
   }).join('');
 }
@@ -605,6 +684,10 @@ function renderAdmin() {
 
   container.innerHTML = list.map(o => {
     const cur = curOf(o);
+    const stats = getPayoutStats(o);
+    const payoutChip = (o.status === 'closed' || o.status === 'inwork') && stats.totalRest > 0
+      ? `<div class="ac-date" style="color:var(--accent2)">⏳ К выплате: ${money(stats.totalRest, cur)}</div>`
+      : '';
     return `
       <div class="admin-card">
         <div class="ac-main">
@@ -619,12 +702,14 @@ function renderAdmin() {
             📅 ${o.date ? formatDateHuman(o.date) : '—'} ${o.time || ''}
             ${o.materials && o.materials.length ? ` · 🧾 ${o.materials.length} чек(ов)` : ''}
           </div>
+          ${payoutChip}
         </div>
         <div class="ac-money">
           <b>${money(o.agreedAmount, cur)}</b>
           <span>${cur}</span>
         </div>
         <div class="ac-actions">
+          <button class="icon-btn" data-action="open-report" data-id="${o.id}" title="Отчёт">📊</button>
           <button class="icon-btn" data-action="admin-edit" data-id="${o.id}" title="Редактировать">✏️</button>
           <button class="icon-btn" data-action="admin-delete" data-id="${o.id}" title="Удалить">🗑</button>
         </div>
@@ -721,7 +806,6 @@ function closeOrderModal() {
   editingMaterials = [];
 }
 
-/* ---------- материалы внутри модалки ---------- */
 function renderModalMaterials() {
   const form = $('#orderForm');
   const cur = form.currency?.value || 'UZS';
@@ -807,6 +891,275 @@ function closeCompleteModal() {
 }
 
 /* =====================================================================
+   Modal — предварительный/финальный отчёт с выплатами
+   ===================================================================== */
+function openReportModal(id) {
+  const o = orders.find(x => x.id === id);
+  if (!o) return;
+  reportingId = id;
+  renderReportModal();
+  $('#reportOverlay').classList.add('open');
+}
+function closeReportModal() {
+  $('#reportOverlay').classList.remove('open');
+  reportingId = null;
+}
+
+function renderReportModal() {
+  const o = orders.find(x => x.id === reportingId);
+  if (!o) return;
+
+  const cur = curOf(o);
+  const d = getDistribution(o);
+  const stats = getPayoutStats(o);
+  const balance = (Number(o.agreedAmount) || 0) - (Number(o.prepayment) || 0);
+
+  const canEditPayouts = o.status === 'inwork' || o.status === 'closed';
+  const isClosed = o.status === 'closed';
+
+  const titleByStatus = {
+    scheduled: 'Предпросмотр заказа',
+    inwork: '📊 Предварительный отчёт',
+    closed: '📊 Финальный отчёт',
+  };
+  $('#reportTitle').textContent = titleByStatus[o.status] || '📊 Отчёт';
+
+  let statusChip = '';
+  if (o.status === 'inwork') statusChip = '<span class="status-badge inwork">В работе</span>';
+  else if (o.status === 'closed') statusChip = '<span class="status-badge closed">Закрыт</span>';
+  else statusChip = '<span class="status-badge scheduled">Запланирован</span>';
+
+  /* Таблица выплат */
+  let tableRows = '';
+  PAYOUT_CATS.forEach(cat => {
+    const r = stats.rows[cat];
+    const pct = { studio: settings.studio, master: settings.master, owner: settings.owner, reserve: settings.reserve }[cat];
+    const inputVal = Math.round(r.paid);
+    const inputMax = Math.round(r.share);
+    const disabled = !canEditPayouts || r.share <= 0;
+    const restClass = r.rest <= 0 ? 'rest-done' : 'rest-pending';
+    const restText = r.share <= 0
+      ? '—'
+      : (r.rest <= 0 ? '✓ закрыто' : money(r.rest, cur));
+    tableRows += `
+      <tr data-cat="${cat}">
+        <td class="cat-name">${PAYOUT_LABELS[cat]}<br><span class="muted small">${pct}%</span></td>
+        <td class="num">${money(r.share, cur)}</td>
+        <td>
+          <div class="report-input-cell">
+            <input type="number" class="payout-input"
+                   min="0" max="${inputMax}" step="1"
+                   value="${inputVal}"
+                   data-id="${o.id}" data-cat="${cat}"
+                   ${disabled ? 'disabled' : ''}>
+            <button class="payout-fill-btn"
+                    data-action="fill-payout" data-id="${o.id}" data-cat="${cat}"
+                    title="Выплатить полностью"
+                    ${disabled ? 'disabled' : ''}>✓</button>
+          </div>
+        </td>
+        <td class="rest-cell ${r.rest <= 0 ? 'rest-done' : 'rest-pending'}" data-rest-cat="${cat}">${restText}</td>
+      </tr>
+    `;
+  });
+
+  /* Сводка сверху */
+  const summaryHtml = `
+    <div class="report-summary">
+      <div class="rs-item">
+        <span>К распределению</span>
+        <b>${money(stats.totalShare, cur)}</b>
+      </div>
+      <div class="rs-item rs-paid">
+        <span>Выплачено</span>
+        <b>${money(stats.totalPaid, cur)}</b>
+      </div>
+      <div class="rs-item rs-rest">
+        <span>Осталось выплатить</span>
+        <b>${money(stats.totalRest, cur)}</b>
+      </div>
+    </div>
+  `;
+
+  /* Кнопки */
+  let actionsHtml = '';
+  if (canEditPayouts) {
+    actionsHtml = `
+      <div class="report-actions">
+        <button class="btn ghost" data-action="report-fill-all" data-id="${o.id}">✓ Выплатить всё</button>
+        <button class="btn ghost" data-action="report-reset-all" data-id="${o.id}">✕ Сбросить выплаты</button>
+        <button class="btn primary" data-action="report-copy" data-id="${o.id}">📋 В мессенджер</button>
+      </div>
+    `;
+  } else {
+    actionsHtml = `
+      <div class="report-actions">
+        <button class="btn primary" data-action="report-copy" data-id="${o.id}">📋 В мессенджер</button>
+      </div>
+      <div class="report-payouts-note">
+        ⏳ Выплаты доступны после начала работы (статус «В работе» или «Закрыт»).
+      </div>
+    `;
+  }
+
+  const info = `
+    <div class="report-order-info">
+      <div class="report-order-title">
+        ${esc(o.brand)} ${esc(o.model || '')}
+        ${o.plate ? `<span class="plate">${esc(o.plate)}</span>` : ''}
+      </div>
+      <div class="report-order-sub">👤 ${esc(o.clientName)} · 📞 ${esc(o.clientPhone)}</div>
+      ${o.workType ? `<div class="report-order-sub">🔧 ${esc(o.workType)}</div>` : ''}
+      <div class="report-order-chips">
+        ${statusChip}
+        <span class="status-badge ${o.status === 'closed' ? 'closed' : 'scheduled'}">${cur === 'USD' ? '$ USD' : 'сум UZS'}</span>
+        ${o.date ? `<span class="status-badge scheduled">📅 ${formatDateHuman(o.date)} ${o.time || ''}</span>` : ''}
+      </div>
+    </div>
+  `;
+
+  const finance = `
+    <div class="report-section-title">💰 Финансы</div>
+    <div class="report-finance">
+      <div class="rf-row"><span>Стоимость заказа</span><b>${money(o.agreedAmount, cur)}</b></div>
+      <div class="rf-row"><span>Предоплата</span><b>${money(o.prepayment, cur)}</b></div>
+      <div class="rf-row"><span>Остаток к оплате</span><b class="accent">${money(balance, cur)}</b></div>
+      <div class="rf-row"><span>Материалы (чеки)</span><b class="mat">−${money(d.materialsTotal, cur)}</b></div>
+      <div class="rf-row rf-total"><span>Чистая прибыль</span><b>${money(d.profit, cur)}</b></div>
+    </div>
+  `;
+
+  const payoutsSection = `
+    <div class="report-section-title">💼 Распределение и выплаты</div>
+    ${summaryHtml}
+    <div class="report-table-wrap">
+      <table class="report-table">
+        <thead>
+          <tr>
+            <th>Категория</th>
+            <th style="text-align:right">Должно быть</th>
+            <th>Выплачено</th>
+            <th style="text-align:right">Остаток</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+        <tfoot>
+          <tr>
+            <td>Итого</td>
+            <td class="num total-share" data-cur="${cur}">${money(stats.totalShare, cur)}</td>
+            <td class="num total-paid" data-cur="${cur}">${money(stats.totalPaid, cur)}</td>
+            <td class="rest-cell total-rest ${stats.totalRest > 0 ? 'rest-pending' : 'rest-done'}"
+                data-cur="${cur}">${money(stats.totalRest, cur)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+
+  $('#reportBody').innerHTML = info + finance + payoutsSection + actionsHtml;
+}
+
+/* ---------- Изменение выплаты ---------- */
+function savePayout(orderId, cat, value) {
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return null;
+  const d = getDistribution(o);
+  const max = Math.max(0, Number(d[cat]) || 0);
+  let v = Number(value) || 0;
+  if (v < 0) v = 0;
+  if (v > max) v = max;
+  const payouts = getPayouts(o);
+  payouts[cat] = Math.round(v);
+  saveOrders();
+  return payouts[cat];
+}
+
+function refreshReportDerived() {
+  const o = orders.find(x => x.id === reportingId);
+  if (!o) return;
+  const cur = curOf(o);
+  const stats = getPayoutStats(o);
+
+  PAYOUT_CATS.forEach(cat => {
+    const r = stats.rows[cat];
+    const cell = $(`.rest-cell[data-rest-cat="${cat}"]`);
+    if (!cell) return;
+    if (r.share <= 0) {
+      cell.textContent = '—';
+      cell.className = 'rest-cell rest-note';
+    } else if (r.rest <= 0) {
+      cell.textContent = '✓ закрыто';
+      cell.className = 'rest-cell rest-done';
+    } else {
+      cell.textContent = money(r.rest, cur);
+      cell.className = 'rest-cell rest-pending';
+    }
+  });
+
+  const totalShareEl = $('.total-share');
+  const totalPaidEl = $('.total-paid');
+  const totalRestEl = $('.total-rest');
+  if (totalShareEl) totalShareEl.textContent = money(stats.totalShare, cur);
+  if (totalPaidEl) totalPaidEl.textContent = money(stats.totalPaid, cur);
+  if (totalRestEl) {
+    totalRestEl.textContent = money(stats.totalRest, cur);
+    totalRestEl.className = 'rest-cell total-rest ' + (stats.totalRest > 0 ? 'rest-pending' : 'rest-done');
+  }
+
+  const rsPaid = $('.rs-item.rs-paid b');
+  const rsRest = $('.rs-item.rs-rest b');
+  const rsShare = $('.rs-item:not(.rs-paid):not(.rs-rest) b');
+  if (rsShare) rsShare.textContent = money(stats.totalShare, cur);
+  if (rsPaid) rsPaid.textContent = money(stats.totalPaid, cur);
+  if (rsRest) rsRest.textContent = money(stats.totalRest, cur);
+}
+
+function fillPayout(orderId, cat) {
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  const d = getDistribution(o);
+  const payouts = getPayouts(o);
+  payouts[cat] = Math.max(0, Math.round(Number(d[cat]) || 0));
+  saveOrders();
+
+  const input = $(`.payout-input[data-id="${orderId}"][data-cat="${cat}"]`);
+  if (input) input.value = payouts[cat];
+  refreshReportDerived();
+}
+
+function fillAllPayouts(orderId) {
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  const d = getDistribution(o);
+  const payouts = getPayouts(o);
+  PAYOUT_CATS.forEach(cat => {
+    payouts[cat] = Math.max(0, Math.round(Number(d[cat]) || 0));
+  });
+  saveOrders();
+  renderReportModal();
+  toast('✓ Все доли помечены как выплаченные');
+}
+
+function resetAllPayouts(orderId) {
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  o.payouts = { studio: 0, master: 0, owner: 0, reserve: 0 };
+  saveOrders();
+  renderReportModal();
+  toast('✕ Выплаты сброшены');
+}
+
+function clampPayouts(o) {
+  if (!o.payouts) return;
+  const d = getDistribution(o);
+  PAYOUT_CATS.forEach(cat => {
+    const max = Math.max(0, Number(d[cat]) || 0);
+    if ((o.payouts[cat] || 0) > max) o.payouts[cat] = Math.round(max);
+    if ((o.payouts[cat] || 0) < 0) o.payouts[cat] = 0;
+  });
+}
+
+/* =====================================================================
    Действия
    ===================================================================== */
 function addMaterial(id, name, amount) {
@@ -815,6 +1168,7 @@ function addMaterial(id, name, amount) {
   if (!name || !(amount > 0)) { toast('⚠️ Укажите название и сумму'); return; }
   o.materials = o.materials || [];
   o.materials.push({ name, amount: Number(amount) });
+  clampPayouts(o);
   saveOrders();
   renderWork();
   renderStats();
@@ -824,6 +1178,7 @@ function removeMaterial(id, idx) {
   const o = orders.find(x => x.id === id);
   if (!o || !o.materials) return;
   o.materials.splice(idx, 1);
+  clampPayouts(o);
   saveOrders();
   renderWork();
 }
@@ -846,6 +1201,7 @@ function confirmComplete(id) {
   o.closedAt = new Date().toISOString();
   o.distribution = { ...settings };
   o.final = d;
+  clampPayouts(o);
   saveOrders();
   closeCompleteModal();
   renderAll();
@@ -896,7 +1252,10 @@ function importData(file) {
       if (!data || !Array.isArray(data.orders)) throw new Error('bad format');
       if (!confirm(`Импортировать ${data.orders.length} заказов? Текущие данные будут заменены.`)) return;
       orders = data.orders;
-      orders.forEach(o => { if (!o.currency) o.currency = 'UZS'; });
+      orders.forEach(o => {
+        if (!o.currency) o.currency = 'UZS';
+        if (!o.payouts) o.payouts = { studio: 0, master: 0, owner: 0, reserve: 0 };
+      });
       if (data.settings) settings = { ...DEFAULT_SETTINGS, ...data.settings };
       saveOrders();
       saveSettingsLS();
@@ -950,12 +1309,13 @@ function bindEvents() {
   document.addEventListener('click', e => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
-    const { action, id, idx } = btn.dataset;
+    const { action, id, idx, cat } = btn.dataset;
 
     switch (action) {
       case 'new-order':          openOrderModal(); break;
       case 'edit':               openOrderModal(id); break;
       case 'admin-edit':         openOrderModal(id); break;
+      case 'open-report':        openReportModal(id); break;
       case 'delete':             deleteOrder(id); break;
       case 'admin-delete':       deleteOrder(id); break;
       case 'start-work':         startWork(id); break;
@@ -975,6 +1335,15 @@ function bindEvents() {
       case 'complete':           openCompleteModal(id); break;
       case 'confirm-complete':   confirmComplete(id); break;
       case 'close-complete':     closeCompleteModal(); break;
+      case 'close-report':       closeReportModal(); break;
+      case 'fill-payout':        fillPayout(id, cat); break;
+      case 'report-fill-all':    fillAllPayouts(id); break;
+      case 'report-reset-all':   resetAllPayouts(id); break;
+      case 'report-copy': {
+        const o = orders.find(x => x.id === id);
+        if (o) copyText(buildReport(o));
+        break;
+      }
       case 'copy': {
         const o = orders.find(x => x.id === id);
         if (o) copyText(buildReport(o));
@@ -986,6 +1355,17 @@ function bindEvents() {
       case 'import':             $('#importFile').click(); break;
       case 'clear-db':           clearDatabase(); break;
     }
+  });
+
+  /* --- Ввод в поле "Выплачено" --- */
+  document.addEventListener('input', e => {
+    if (!e.target.matches('.payout-input')) return;
+    const { id, cat } = e.target.dataset;
+    const clamped = savePayout(id, cat, e.target.value);
+    if (clamped !== null && Number(e.target.value) !== clamped) {
+      e.target.value = clamped;
+    }
+    refreshReportDerived();
   });
 
   /* --- Переключение периода в аналитике --- */
@@ -1036,6 +1416,7 @@ function bindEvents() {
         if (prevStatus === 'closed' && o.status === 'closed') {
           o.final = calcDistribution(o, o.distribution || settings);
         }
+        clampPayouts(o);
       }
     } else {
       orders.push({
@@ -1045,10 +1426,10 @@ function bindEvents() {
         materials: [],
         createdAt: new Date().toISOString(),
         closedAt: null,
+        payouts: { studio: 0, master: 0, owner: 0, reserve: 0 },
       });
     }
 
-    /* Переходим на неделю сохранённого заказа, чтобы он был виден */
     if (data.date) {
       const baseMonday = startOfWeek(new Date());
       const orderMonday = startOfWeek(parseISO(data.date));
@@ -1069,8 +1450,11 @@ function bindEvents() {
   $('#completeOverlay').addEventListener('click', e => {
     if (e.target.id === 'completeOverlay') closeCompleteModal();
   });
+  $('#reportOverlay').addEventListener('click', e => {
+    if (e.target.id === 'reportOverlay') closeReportModal();
+  });
 
-  /* --- Enter в поле материала (в карточке "в работе") --- */
+  /* --- Enter в поле материала --- */
   document.addEventListener('keydown', e => {
     if (e.key === 'Enter' && e.target.matches('.mat-name, .mat-amount')) {
       e.preventDefault();
@@ -1086,6 +1470,7 @@ function bindEvents() {
     if (e.key === 'Escape') {
       closeOrderModal();
       closeCompleteModal();
+      closeReportModal();
     }
   });
 
